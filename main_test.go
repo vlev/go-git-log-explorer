@@ -12,7 +12,7 @@ func TestCommitId(t *testing.T) {
 		input string
 		id    string
 	}{
-		{"commit d0532bdb9ab40e06ee0702481f623d5054c8831a\r\n", "d0532bdb9ab40e06ee0702481f623d5054c8831a"},
+		{"commit d0532bdb9ab40e06ee0702481f623d5054c8831a", "d0532bdb9ab40e06ee0702481f623d5054c8831a"},
 		{"commit d0532bdb9ab40e06ee0702481f623d5054c8831a\n", "d0532bdb9ab40e06ee0702481f623d5054c8831a"},
 		{"commit d0532bdb9ab40e06ee0702481f623d5054c8831a", "d0532bdb9ab40e06ee0702481f623d5054c8831a"},
 	}
@@ -31,7 +31,6 @@ func TestAuthor(t *testing.T) {
 		id    string
 	}{
 		{"Author: Albert <albert@gmail.com>", "Albert <albert@gmail.com>"},
-		{"Author: Albert <albert@gmail.com>\r\n", "Albert <albert@gmail.com>"},
 	}
 
 	for _, sample := range cases {
@@ -40,6 +39,33 @@ func TestAuthor(t *testing.T) {
 			g.Expect(getAuthor(sample.input)).Should(Equal(sample.id))
 		})
 	}
+}
+
+func TestForGetLastEmptyLine(t *testing.T){
+	cases := []struct {
+		input []string
+		line int 
+	}{
+		{[]string{"", "1\t2\tstaging/src/k8s.io/apiserver/pkg/server/filters/BUILD"}, 0},
+		{[]string{"1\t2\tstaging/src/k8s.io/apiserver/pkg/server/filters/BUILD",""}, 1},
+		{[]string{"", "", "1\t2\tstaging/src/k8s.io/apiserver/pkg/server/filters/BUILD"}, 1},
+		{[]string{"1\t2\tstaging/src/k8s.io/apiserver/pkg/server/filters/BUILD"}, -1},
+		{[]string{"commit d0532bdb9ab40e06ee0702481f623d5054c8831a",
+		"Author: Han Kang <hankang@google.com>",
+		"Date:   2019-01-04 14:06:46 -0800",
+		"",
+		"    add a content-type filter to apiserver filters to autoset nosniff", 
+		"",
+		"1\t2\tstaging/src/k8s.io/apiserver/pkg/server/filters/BUILD"}, 5},
+		
+	}
+	for _, sample := range cases {
+		t.Run("", func(t *testing.T) {
+			g := NewGomegaWithT(t)
+			g.Expect(getLastEmptyLine(sample.input)).To(Equal(sample.line))
+		})
+	}
+	
 }
 
 func TestTime(t *testing.T) {

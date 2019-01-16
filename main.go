@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 //log should be produced by "git log --no-merges --numstat --date=iso8601"
@@ -30,7 +32,8 @@ func main() {
 	for s.Scan() {
 		err = reader.readLine(s.Text())
 		if err != nil {
-			panic(err)
+			fmt.Printf("%+v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -56,8 +59,8 @@ func newLogReader() *LogReader {
 }
 
 func (r *LogReader) error(e error) error {
-	msg := fmt.Sprintf("Error processing commit at line %v: %v", r.line-uint32(len(r.buf)), e.Error())
-	return errors.New(msg)
+	line := r.line - uint32(len(r.buf))
+	return errors.Wrapf(e, "Error processing commit at line %v", line)
 }
 
 func (r *LogReader) readLine(s string) (err error) {
@@ -72,6 +75,7 @@ func (r *LogReader) readLine(s string) (err error) {
 		if err != nil {
 			return r.error(err)
 		}
+		r.buf = make([]string, 0)
 	}
 	r.buf = append(r.buf, s)
 	return nil
@@ -86,27 +90,83 @@ func (r LogReader) close() error {
 
 }
 
-func (r *LogReader) processCommit() (err error) {
+func (r LogReader) processCommit() (err error) {
 	defer func() {
-        if r:= recover(); r!= nil {
-            err = fmt.Errorf("Failed to parse commit: %v", r)
-        }
-    }()
-	
-	
-	h, err := headersFromLog(r.buf[0:3])
+		if rec := recover(); rec != nil {
+			if e, ok := rec.(error); ok {
+				err = errors.Wrap(e, "panic")
+			} else {
+				err = errors.Errorf("%v", rec)
+			}
+		}
+	}()
+
+	c, err := getCommit(r.buf)
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("%v (%v): %v\r", h.date, h.author, h.id)
-
-	r.buf = make([]string, 0)
+	fmt.Printf("%v\n\r", c)	
 	return nil
+}
+
+func getCommit(c []string) (*commit, error) {
+	h, err := headersFromLog(c[0:3])
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to extract headers")
+	}
+
+	length := len(c)
+	if length == 4 {
+		//nor stats nor message are present
+		return &commit{headers: *h}, nil
+	}
+
+	lastStatsLine := length - 1
+	lastEmptyLine := getLastEmptyLine(c[:lastStatsLine])
+	if lastEmptyLine == -1 {
+		return nil, errors.New("invalid commit format")
+	}
+
+	i := 4
+	comments := make([]string, 0)
+	for ; len(c[i]) > 0 && c[i][0:1] == " "; i++ {
+		comments = append(comments, c[i][4:])
+	}
+	comment := strings.Join(comments, "\r\n")
+
+	var changes []change
+	if i < length-1 {
+		//stats are present
+		changes, err = getChanges(c[i+1 : length-1])
+		if err != nil {
+			return nil, errors.Wrap(err, "couldn't extract change data")
+		}
+	}
+
+	return &commit{headers: *h, comment: comment, changes: changes}, nil
+}
+
+func getChanges(c []string) ([]change, error) {
+	changes := make([]change, 0)
+	for _, line := range c {
+		if line[0:1] == "-" {
+			//stats for binary files are omitted
+			continue
+		}
+
+		c, err := getChange(line)
+		if err != nil {
+			return changes, errors.Wrap(err, "couldn't extract change data")
+		}
+		changes = append(changes, *c)
+	}
+	return changes, nil
 }
 
 type commit struct {
 	headers headers
+	changes []change
+	comment string
 }
 
 type headers struct {
@@ -115,10 +175,61 @@ type headers struct {
 	date   time.Time
 }
 
-func headersFromLog(text []string) (h *headers, err error) {
-	date, err := getTime(text[2])
+type change struct {
+	added   uint32
+	removed uint32
+	path    string
+}
+
+func getChange(line string) (*change, error) {
+	r, _ := regexp.Compile(`(\d+)\t(\d+)\t(.*)`)
+
+	matches := r.FindStringSubmatch(line)
+	if matches == nil {
+		return nil, errors.Errorf("invalid stats string: %v", line)
+	}
+
+	added, err := getNumericStat(matches[1])
 	if err != nil {
 		return nil, err
+	}
+
+	removed, err := getNumericStat(matches[2])
+	if err != nil {
+		return nil, err
+	}
+
+	return &change{
+		added:   added,
+		removed: removed,
+		path:    matches[3],
+	}, nil
+
+}
+
+func getNumericStat(s string) (uint32, error) {
+	i, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to read numeric: %v", s)
+	}
+	return uint32(i), nil
+}
+
+func getLastEmptyLine(commit []string) int {
+	for i := len(commit) - 1; i >= 0; i-- {
+		line := commit[i]
+		if len(line) == 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+func headersFromLog(text []string) (*headers, error) {
+	timeString := text[2]
+	date, err := getTime(timeString)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to extract time from: %v", timeString)
 	}
 
 	return &headers{id: getCommitID(text[0]),
