@@ -101,11 +101,15 @@ func (r LogReader) processCommit() (err error) {
 		}
 	}()
 
+	length := len(r.buf)
+	if len(r.buf[length-1]) == 0 {
+		r.buf = r.buf[:length-1]
+	}
 	c, err := getCommit(r.buf)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%v\n\r", c)	
+	fmt.Printf("%v", c)
 	return nil
 }
 
@@ -121,29 +125,41 @@ func getCommit(c []string) (*commit, error) {
 		return &commit{headers: *h}, nil
 	}
 
-	lastStatsLine := length - 1
-	lastEmptyLine := getLastEmptyLine(c[:lastStatsLine])
-	if lastEmptyLine == -1 {
-		return nil, errors.New("invalid commit format")
+	statsArePresent, err := regexp.MatchString(`^[\d-]+\t[\d-]+\t`, c[length-1])
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to lookup for stats")
 	}
-
-	i := 4
-	comments := make([]string, 0)
-	for ; len(c[i]) > 0 && c[i][0:1] == " "; i++ {
-		comments = append(comments, c[i][4:])
-	}
-	comment := strings.Join(comments, "\r\n")
-
 	var changes []change
-	if i < length-1 {
-		//stats are present
-		changes, err = getChanges(c[i+1 : length-1])
+	if statsArePresent {
+		lastEmptyLine := getLastEmptyLine(c)
+		if lastEmptyLine == -1 {
+			return nil, errors.New("invalid commit format")
+		}
+		changes, err = getChanges(c[lastEmptyLine+1:])
 		if err != nil {
 			return nil, errors.Wrap(err, "couldn't extract change data")
 		}
 	}
 
+	var comment string
+	linesWithoutStats := length - len(changes)
+	commentsArePresent := linesWithoutStats > 4
+
+	if commentsArePresent {
+		comment = getComment(c[4:linesWithoutStats])
+	}
+
 	return &commit{headers: *h, comment: comment, changes: changes}, nil
+}
+
+func getComment(c []string) string {
+	comments := make([]string, 0)
+	for _, line := range c {
+		if len(line) > 0 {
+			comments = append(comments, strings.TrimLeft(line, " "))
+		}
+	}
+	return strings.Join(comments, "\r\n")
 }
 
 func getChanges(c []string) ([]change, error) {
