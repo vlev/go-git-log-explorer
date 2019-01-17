@@ -90,7 +90,7 @@ func (r LogReader) processCommit() (err error) {
 	}
 	err = r.consumer(*c)
 	if err != nil {
-		errors.Wrap(err, "failed to consume commit")
+		return errors.Wrap(err, "failed to consume commit")
 	}
 	return nil
 }

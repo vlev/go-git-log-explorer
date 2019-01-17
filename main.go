@@ -11,7 +11,7 @@ import (
 //log should be produced by "git log --no-merges --numstat --date=iso8601"
 func main() {
 
-	writer := CommitDBWriter{}
+	writer := NewCommitDBWriter()
 	err := writer.Init()
 	if err != nil {
 		fmt.Printf("%+v\n", err)
@@ -20,7 +20,7 @@ func main() {
 	defer writer.Close()
 
 
-	f, err := os.Open("example.log")
+	f, err := os.Open("big.log")
 	if err != nil {
 		panic(err)
 	}
@@ -42,7 +42,8 @@ func main() {
 
 	err = reader.close()
 	if err != nil {
-		panic(err)
+		fmt.Printf("%+v\n", err)
+		os.Exit(1)
 	}
 
 	err = s.Err()
